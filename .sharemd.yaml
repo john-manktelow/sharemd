@@ -1,3 +1,7 @@
+# targetBranch: the branch that published drafts are merged into.
+# Omit to use the repo's default branch.
+# targetBranch: drafts
+
 directories:
   - path: docs/
     label: Documentation

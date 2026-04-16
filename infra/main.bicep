@@ -6,13 +6,21 @@ param appName string = 'sharemd'
 @description('Azure region')
 param location string = resourceGroup().location
 
-@description('GitHub OAuth App client ID')
+@description('GitHub App client ID')
 @secure()
-param githubClientId string
+param githubAppClientId string
 
-@description('GitHub OAuth App client secret')
+@description('GitHub App client secret')
 @secure()
-param githubClientSecret string
+param githubAppClientSecret string
+
+@description('GitHub App numeric ID')
+@secure()
+param githubAppId string
+
+@description('GitHub App private key (PEM, with newlines escaped as \\n)')
+@secure()
+param githubAppPrivateKey string
 
 @description('NextAuth secret (random string)')
 @secure()
@@ -80,8 +88,10 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
       acrUseManagedIdentityCreds: true
       appSettings: [
         { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'false' }
-        { name: 'AUTH_GITHUB_ID', value: githubClientId }
-        { name: 'AUTH_GITHUB_SECRET', value: githubClientSecret }
+        { name: 'GITHUB_APP_CLIENT_ID', value: githubAppClientId }
+        { name: 'GITHUB_APP_CLIENT_SECRET', value: githubAppClientSecret }
+        { name: 'GITHUB_APP_ID', value: githubAppId }
+        { name: 'GITHUB_APP_PRIVATE_KEY', value: githubAppPrivateKey }
         { name: 'AUTH_SECRET', value: authSecret }
         { name: 'GITHUB_REPO', value: githubRepo }
         { name: 'AUTH_TRUST_HOST', value: 'true' }

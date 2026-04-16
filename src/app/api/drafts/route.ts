@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { getConfig } from "@/lib/github";
+import { listUserDrafts } from "@/lib/github";
 
 export async function GET() {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user?.login) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const config = await getConfig();
-    return NextResponse.json(config);
+    const drafts = await listUserDrafts(session.user.login);
+    return NextResponse.json(drafts);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("Config error:", message);
+    console.error("Drafts error:", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

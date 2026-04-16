@@ -17,6 +17,7 @@ interface DirectoryConfig {
 interface FileBrowserProps {
   onFileSelect: (path: string) => void;
   selectedFile: string | null;
+  pendingFiles: Set<string>;
 }
 
 function FolderIcon({ open }: { open: boolean }) {
@@ -32,11 +33,13 @@ function TreeNode({
   depth,
   onFileSelect,
   selectedFile,
+  pendingFiles,
 }: {
   entry: FileEntry;
   depth: number;
   onFileSelect: (path: string) => void;
   selectedFile: string | null;
+  pendingFiles: Set<string>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<FileEntry[]>([]);
@@ -65,6 +68,7 @@ function TreeNode({
   };
 
   const isSelected = selectedFile === entry.path;
+  const isPending = entry.type === "file" && pendingFiles.has(entry.path);
 
   return (
     <div>
@@ -76,7 +80,13 @@ function TreeNode({
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
         {entry.type === "dir" ? <FolderIcon open={expanded} /> : <FileIcon />}
-        <span className="truncate">{entry.name}</span>
+        <span className="truncate flex-1">{entry.name}</span>
+        {isPending && (
+          <span
+            className="w-2 h-2 rounded-full bg-amber-500 ml-2 flex-shrink-0"
+            title="Unpublished draft changes"
+          />
+        )}
       </button>
       {expanded && (
         <div>
@@ -95,6 +105,7 @@ function TreeNode({
               depth={depth + 1}
               onFileSelect={onFileSelect}
               selectedFile={selectedFile}
+              pendingFiles={pendingFiles}
             />
           ))}
         </div>
@@ -103,23 +114,42 @@ function TreeNode({
   );
 }
 
-export default function FileBrowser({ onFileSelect, selectedFile }: FileBrowserProps) {
+export default function FileBrowser({
+  onFileSelect,
+  selectedFile,
+  pendingFiles,
+}: FileBrowserProps) {
   const [roots, setRoots] = useState<DirectoryConfig[]>([]);
   const [rootEntries, setRootEntries] = useState<Record<string, FileEntry[]>>({});
   const [loading, setLoading] = useState(true);
 
+  const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
     async function loadConfig() {
-      const res = await fetch("/api/config");
-      const config = await res.json();
-      setRoots(config.directories ?? []);
+      try {
+        const res = await fetch("/api/config");
+        if (!res.ok) {
+          setError(`Config failed: ${res.status} ${await res.text()}`);
+          setLoading(false);
+          return;
+        }
+        const config = await res.json();
+        setRoots(config.directories ?? []);
 
-      const entries: Record<string, FileEntry[]> = {};
-      for (const dir of config.directories ?? []) {
-        const dirRes = await fetch(`/api/files?path=${encodeURIComponent(dir.path)}`);
-        entries[dir.path] = await dirRes.json();
+        const entries: Record<string, FileEntry[]> = {};
+        for (const dir of config.directories ?? []) {
+          const dirRes = await fetch(`/api/files?path=${encodeURIComponent(dir.path)}`);
+          if (!dirRes.ok) {
+            console.error(`Failed to load ${dir.path}: ${dirRes.status}`);
+            continue;
+          }
+          entries[dir.path] = await dirRes.json();
+        }
+        setRootEntries(entries);
+      } catch (e) {
+        setError(`Error: ${e}`);
       }
-      setRootEntries(entries);
       setLoading(false);
     }
     loadConfig();
@@ -128,6 +158,12 @@ export default function FileBrowser({ onFileSelect, selectedFile }: FileBrowserP
   if (loading) {
     return (
       <div className="p-4 text-sm text-gray-500">Loading file tree...</div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 text-sm text-red-500">{error}</div>
     );
   }
 
@@ -145,6 +181,7 @@ export default function FileBrowser({ onFileSelect, selectedFile }: FileBrowserP
               depth={0}
               onFileSelect={onFileSelect}
               selectedFile={selectedFile}
+              pendingFiles={pendingFiles}
             />
           ))}
         </div>
