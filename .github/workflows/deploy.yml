@@ -5,10 +5,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  id-token: write   # Azure OIDC
+  contents: read
+  packages: write   # ghcr.io push
+
 env:
-  ACR_NAME: sharemdacr
-  APP_NAME: sharemd-app
-  IMAGE_NAME: sharemd
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  CONTAINER_APP: app-sharemd
+  RESOURCE_GROUP: rg_sharemd
 
 jobs:
   build-and-deploy:
@@ -17,23 +22,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to Azure
-        uses: azure/login@v2
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Log in to ACR
-        run: az acr login --name ${{ env.ACR_NAME }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
         run: |
-          ACR_LOGIN_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --query loginServer -o tsv)
-          docker build -t $ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}:${{ github.sha }} -t $ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}:latest .
-          docker push $ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker push $ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}:latest
+          docker build \
+            -t "${{ env.IMAGE_NAME }}:${{ github.sha }}" \
+            -t "${{ env.IMAGE_NAME }}:latest" \
+            .
+          docker push "${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          docker push "${{ env.IMAGE_NAME }}:latest"
 
-      - name: Deploy to App Service
-        uses: azure/webapps-deploy@v3
+      - name: Log in to Azure (OIDC)
+        uses: azure/login@v2
         with:
-          app-name: ${{ env.APP_NAME }}
-          images: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Container Apps
+        run: |
+          az containerapp update \
+            -g ${{ env.RESOURCE_GROUP }} \
+            -n ${{ env.CONTAINER_APP }} \
+            --image "${{ env.IMAGE_NAME }}:${{ github.sha }}"
