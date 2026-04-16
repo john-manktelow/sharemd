@@ -22,3 +22,5 @@ directories:
 ```
 
 Only the directories listed here will be visible to editors.
+
+Mildly modified
