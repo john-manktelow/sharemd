@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 const MDEditor = dynamic(() => import("@uiw/react-md-editor"), { ssr: false });
 
 interface MarkdownEditorProps {
+  repo: string;
   filePath: string;
   onPendingChange?: (path: string, hasPending: boolean) => void;
 }
@@ -21,6 +22,7 @@ type SaveStatus =
   | "error";
 
 export default function MarkdownEditor({
+  repo,
   filePath,
   onPendingChange,
 }: MarkdownEditorProps) {
@@ -43,7 +45,7 @@ export default function MarkdownEditor({
       setLoading(true);
 
       const res = await fetch(
-        `/api/files?path=${encodeURIComponent(filePath)}&type=file`
+        `/api/files?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(filePath)}&type=file`
       );
       const data = await res.json();
 
@@ -72,6 +74,7 @@ export default function MarkdownEditor({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            repo,
             path: filePath,
             content: newContent,
             sha: fileSha,
@@ -101,7 +104,7 @@ export default function MarkdownEditor({
       const res = await fetch("/api/save", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: filePath }),
+        body: JSON.stringify({ repo, path: filePath }),
       });
 
       if (res.ok) {

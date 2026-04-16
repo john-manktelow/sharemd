@@ -8,24 +8,31 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const repo = request.nextUrl.searchParams.get("repo");
   const path = request.nextUrl.searchParams.get("path");
   const type = request.nextUrl.searchParams.get("type");
 
+  if (!repo) {
+    return NextResponse.json({ error: "repo is required" }, { status: 400 });
+  }
   if (!path) {
-    return NextResponse.json({ error: "Path required" }, { status: 400 });
+    return NextResponse.json({ error: "path is required" }, { status: 400 });
   }
 
   try {
     if (type === "file") {
-      const content = await getFileForUser(session.user.login, path);
+      const content = await getFileForUser(repo, session.user.login, path);
       return NextResponse.json(content);
     }
 
-    const entries = await listDirectory(path);
+    const entries = await listDirectory(repo, path);
     return NextResponse.json(entries);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    const status = error && typeof error === "object" && "status" in error ? (error.status as number) : 500;
+    const status =
+      error && typeof error === "object" && "status" in error
+        ? (error.status as number)
+        : 500;
     console.error(`GitHub API error for ${path}:`, message);
     return NextResponse.json({ error: message }, { status });
   }

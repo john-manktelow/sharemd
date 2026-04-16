@@ -22,8 +22,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { path, content, sha } = await request.json();
+  const { repo, path, content, sha } = await request.json();
 
+  if (!repo) {
+    return NextResponse.json({ error: "repo is required" }, { status: 400 });
+  }
   if (!path || content === undefined) {
     return NextResponse.json(
       { error: "path and content are required" },
@@ -33,6 +36,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const result = await saveToUserDraft(
+      repo,
       session.user.login,
       path,
       content,
@@ -54,13 +58,17 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { path, message } = await request.json();
+  const { repo, path, message } = await request.json();
 
+  if (!repo) {
+    return NextResponse.json({ error: "repo is required" }, { status: 400 });
+  }
   if (!path) {
     return NextResponse.json({ error: "path is required" }, { status: 400 });
   }
 
   const result = await publishUserDraft(
+    repo,
     session.user.login,
     path,
     message ?? `Update ${path} via ShareMD`

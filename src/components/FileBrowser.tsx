@@ -15,6 +15,7 @@ interface DirectoryConfig {
 }
 
 interface FileBrowserProps {
+  repo: string;
   onFileSelect: (path: string) => void;
   selectedFile: string | null;
   pendingFiles: Set<string>;
@@ -29,12 +30,14 @@ function FileIcon() {
 }
 
 function TreeNode({
+  repo,
   entry,
   depth,
   onFileSelect,
   selectedFile,
   pendingFiles,
 }: {
+  repo: string;
   entry: FileEntry;
   depth: number;
   onFileSelect: (path: string) => void;
@@ -50,11 +53,13 @@ function TreeNode({
       return;
     }
     setLoading(true);
-    const res = await fetch(`/api/files?path=${encodeURIComponent(entry.path)}`);
+    const res = await fetch(
+      `/api/files?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(entry.path)}`
+    );
     const data = await res.json();
     setChildren(data);
     setLoading(false);
-  }, [entry.path, children.length]);
+  }, [repo, entry.path, children.length]);
 
   const handleClick = async () => {
     if (entry.type === "dir") {
@@ -101,6 +106,7 @@ function TreeNode({
           {children.map((child) => (
             <TreeNode
               key={child.path}
+              repo={repo}
               entry={child}
               depth={depth + 1}
               onFileSelect={onFileSelect}
@@ -115,6 +121,7 @@ function TreeNode({
 }
 
 export default function FileBrowser({
+  repo,
   onFileSelect,
   selectedFile,
   pendingFiles,
@@ -128,7 +135,7 @@ export default function FileBrowser({
   useEffect(() => {
     async function loadConfig() {
       try {
-        const res = await fetch("/api/config");
+        const res = await fetch(`/api/config?repo=${encodeURIComponent(repo)}`);
         if (!res.ok) {
           setError(`Config failed: ${res.status} ${await res.text()}`);
           setLoading(false);
@@ -139,7 +146,9 @@ export default function FileBrowser({
 
         const entries: Record<string, FileEntry[]> = {};
         for (const dir of config.directories ?? []) {
-          const dirRes = await fetch(`/api/files?path=${encodeURIComponent(dir.path)}`);
+          const dirRes = await fetch(
+            `/api/files?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(dir.path)}`
+          );
           if (!dirRes.ok) {
             console.error(`Failed to load ${dir.path}: ${dirRes.status}`);
             continue;
@@ -153,7 +162,7 @@ export default function FileBrowser({
       setLoading(false);
     }
     loadConfig();
-  }, []);
+  }, [repo]);
 
   if (loading) {
     return (
@@ -177,6 +186,7 @@ export default function FileBrowser({
           {(rootEntries[root.path] ?? []).map((entry) => (
             <TreeNode
               key={entry.path}
+              repo={repo}
               entry={entry}
               depth={0}
               onFileSelect={onFileSelect}

@@ -38,32 +38,154 @@ export interface UserDraft {
   branch: string;
 }
 
+export interface AccessibleRepo {
+  owner: string;
+  repo: string;
+  fullName: string;
+}
+
 const DRAFT_BRANCH_PREFIX = "sharemd/drafts/";
 
-function getRepoInfo(): { owner: string; repo: string } {
-  const [owner, repo] = (process.env.GITHUB_REPO ?? "").split("/");
+// --- App-level auth (cached) ------------------------------------------------
+
+// Maps repo full name (owner/repo) → installation ID.
+const repoInstallationCache = new Map<string, number>();
+let cachedInstallUrl: string | null = null;
+
+function getAppCredentials(): { appId: string; privateKey: string } {
+  const appId = process.env.GITHUB_APP_ID;
+  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY?.replace(/\\n/g, "\n");
+
+  if (!appId || !privateKey) {
+    throw new Error(
+      "GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY env vars must be set"
+    );
+  }
+
+  return { appId, privateKey };
+}
+
+function createAppOctokit(): Octokit {
+  const { appId, privateKey } = getAppCredentials();
+  return new Octokit({
+    authStrategy: createAppAuth,
+    auth: { appId, privateKey },
+  });
+}
+
+function createOctokitForInstallation(installationId: number): Octokit {
+  const { appId, privateKey } = getAppCredentials();
+  return new Octokit({
+    authStrategy: createAppAuth,
+    auth: { appId, privateKey, installationId },
+  });
+}
+
+/**
+ * Discovers all installations and their accessible repos. Populates
+ * the repo → installation cache and returns the full repo list.
+ */
+async function discoverAllRepos(): Promise<AccessibleRepo[]> {
+  const appOctokit = createAppOctokit();
+  const { data: installations } = await appOctokit.apps.listInstallations();
+
+  const allRepos: AccessibleRepo[] = [];
+
+  for (const installation of installations) {
+    const octokit = createOctokitForInstallation(installation.id);
+    const {
+      data: { repositories },
+    } = await octokit.apps.listReposAccessibleToInstallation();
+
+    for (const r of repositories) {
+      const fullName = r.full_name;
+      repoInstallationCache.set(fullName, installation.id);
+      allRepos.push({
+        owner: r.owner.login,
+        repo: r.name,
+        fullName,
+      });
+    }
+  }
+
+  return allRepos;
+}
+
+/**
+ * Gets the installation ID for a specific repo. Uses the cache, falling back
+ * to the repo-specific installation lookup endpoint.
+ */
+async function getInstallationIdForRepo(
+  repoFullName: string
+): Promise<number> {
+  const cached = repoInstallationCache.get(repoFullName);
+  if (cached) {
+    return cached;
+  }
+
+  const { owner, repo } = parseRepoFullName(repoFullName);
+  const appOctokit = createAppOctokit();
+  const { data } = await appOctokit.apps.getRepoInstallation({ owner, repo });
+  repoInstallationCache.set(repoFullName, data.id);
+  return data.id;
+}
+
+/**
+ * Creates an Octokit scoped to the installation that owns the given repo.
+ */
+async function createInstallationOctokit(
+  repoFullName: string
+): Promise<Octokit> {
+  const installationId = await getInstallationIdForRepo(repoFullName);
+  return createOctokitForInstallation(installationId);
+}
+
+/**
+ * Returns the URL to install the app on a new account/org.
+ */
+export async function getAppInstallUrl(): Promise<string> {
+  if (cachedInstallUrl) {
+    return cachedInstallUrl;
+  }
+
+  const appOctokit = createAppOctokit();
+  const { data: app } = await appOctokit.apps.getAuthenticated();
+  cachedInstallUrl = (app?.html_url ?? "") + "/installations/new";
+  return cachedInstallUrl;
+}
+
+// --- Repo selection ---------------------------------------------------------
+
+function parseRepoFullName(fullName: string): { owner: string; repo: string } {
+  const [owner, repo] = fullName.split("/");
   if (!owner || !repo) {
-    throw new Error("GITHUB_REPO env var must be set to owner/repo");
+    throw new Error(`Invalid repository name: ${fullName}`);
   }
   return { owner, repo };
 }
+
+/**
+ * Lists all repositories across all installations of the app.
+ */
+export async function listAccessibleRepos(): Promise<AccessibleRepo[]> {
+  return discoverAllRepos();
+}
+
+// --- Helpers ----------------------------------------------------------------
 
 function normalizePath(path: string): string {
   return path.replace(/\/+$/, "");
 }
 
 function sanitizeLogin(login: string): string {
-  // GitHub logins are already limited to [a-zA-Z0-9-]; strip anything else defensively.
   return login.replace(/[^a-zA-Z0-9-]/g, "-");
 }
 
 function sanitizeFilePath(path: string): string {
-  // Git allows slashes and dots in branch names. Preserve the path as-is
-  // after replacing anything unsafe (keeps round-trip simple for typical paths).
   return path
     .replace(/[^a-zA-Z0-9./_-]/g, "-")
-    .replace(/\.\.+/g, ".") // no '..' sequences
-    .replace(/^\/+|\/+$/g, ""); // no leading/trailing slashes
+    .replace(/\.\.+/g, ".")
+    .replace(/^\/+|\/+$/g, "");
 }
 
 export function draftBranchName(login: string, filePath: string): string {
@@ -86,42 +208,11 @@ function parseDraftBranch(
   return { login: rest.slice(0, slash), filePath: rest.slice(slash + 1) };
 }
 
-/**
- * Creates an Octokit authenticated as a specific installation of the GitHub App.
- */
-async function createInstallationOctokit(): Promise<Octokit> {
-  const appId = process.env.GITHUB_APP_ID;
-  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY?.replace(/\\n/g, "\n");
+// --- Config -----------------------------------------------------------------
 
-  if (!appId || !privateKey) {
-    throw new Error("GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY env vars must be set");
-  }
-
-  const { owner, repo } = getRepoInfo();
-
-  const appOctokit = new Octokit({
-    authStrategy: createAppAuth,
-    auth: { appId, privateKey },
-  });
-
-  const { data: installation } = await appOctokit.apps.getRepoInstallation({
-    owner,
-    repo,
-  });
-
-  return new Octokit({
-    authStrategy: createAppAuth,
-    auth: {
-      appId,
-      privateKey,
-      installationId: installation.id,
-    },
-  });
-}
-
-export async function getConfig(): Promise<ShareMdConfig> {
-  const octokit = await createInstallationOctokit();
-  const { owner, repo } = getRepoInfo();
+export async function getConfig(repoFullName: string): Promise<ShareMdConfig> {
+  const octokit = await createInstallationOctokit(repoFullName);
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
   try {
     const { data } = await octokit.repos.getContent({
@@ -137,16 +228,39 @@ export async function getConfig(): Promise<ShareMdConfig> {
     const content = Buffer.from(data.content, "base64").toString("utf-8");
     return parseYaml(content) as ShareMdConfig;
   } catch (error: unknown) {
-    if (error && typeof error === "object" && "status" in error && error.status === 404) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "status" in error &&
+      error.status === 404
+    ) {
       return { directories: [{ path: "docs/", label: "Documentation" }] };
     }
     throw error;
   }
 }
 
-export async function listDirectory(path: string): Promise<FileEntry[]> {
-  const octokit = await createInstallationOctokit();
-  const { owner, repo } = getRepoInfo();
+export async function getDefaultBranch(repoFullName: string): Promise<string> {
+  const octokit = await createInstallationOctokit(repoFullName);
+  const { owner, repo } = parseRepoFullName(repoFullName);
+
+  const { data } = await octokit.repos.get({ owner, repo });
+  return data.default_branch;
+}
+
+export async function getTargetBranch(repoFullName: string): Promise<string> {
+  const config = await getConfig(repoFullName);
+  return config.targetBranch ?? (await getDefaultBranch(repoFullName));
+}
+
+// --- File operations --------------------------------------------------------
+
+export async function listDirectory(
+  repoFullName: string,
+  path: string
+): Promise<FileEntry[]> {
+  const octokit = await createInstallationOctokit(repoFullName);
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
   const { data } = await octokit.repos.getContent({
     owner,
@@ -175,15 +289,23 @@ export async function listDirectory(path: string): Promise<FileEntry[]> {
     });
 }
 
-async function branchExists(branch: string): Promise<boolean> {
-  const octokit = await createInstallationOctokit();
-  const { owner, repo } = getRepoInfo();
+async function branchExists(
+  repoFullName: string,
+  branch: string
+): Promise<boolean> {
+  const octokit = await createInstallationOctokit(repoFullName);
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
   try {
     await octokit.git.getRef({ owner, repo, ref: `heads/${branch}` });
     return true;
   } catch (error: unknown) {
-    if (error && typeof error === "object" && "status" in error && error.status === 404) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "status" in error &&
+      error.status === 404
+    ) {
       return false;
     }
     throw error;
@@ -191,11 +313,12 @@ async function branchExists(branch: string): Promise<boolean> {
 }
 
 async function readFileOnRef(
+  repoFullName: string,
   path: string,
   ref: string
 ): Promise<{ content: string; sha: string; path: string }> {
-  const octokit = await createInstallationOctokit();
-  const { owner, repo } = getRepoInfo();
+  const octokit = await createInstallationOctokit(repoFullName);
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
   const { data } = await octokit.repos.getContent({
     owner,
@@ -220,44 +343,38 @@ async function readFileOnRef(
  * from the target branch.
  */
 export async function getFileForUser(
+  repoFullName: string,
   login: string,
   path: string
 ): Promise<FileContent> {
   const draftBranch = draftBranchName(login, path);
 
-  if (await branchExists(draftBranch)) {
-    const result = await readFileOnRef(path, draftBranch);
+  if (await branchExists(repoFullName, draftBranch)) {
+    const result = await readFileOnRef(repoFullName, path, draftBranch);
     return { ...result, hasDraft: true };
   }
 
-  const targetBranch = await getTargetBranch();
-  const result = await readFileOnRef(path, targetBranch);
+  const targetBranch = await getTargetBranch(repoFullName);
+  const result = await readFileOnRef(repoFullName, path, targetBranch);
   return { ...result, hasDraft: false };
 }
 
-export async function getDefaultBranch(): Promise<string> {
-  const octokit = await createInstallationOctokit();
-  const { owner, repo } = getRepoInfo();
+// --- Draft operations -------------------------------------------------------
 
-  const { data } = await octokit.repos.get({ owner, repo });
-  return data.default_branch;
-}
-
-export async function getTargetBranch(): Promise<string> {
-  const config = await getConfig();
-  return config.targetBranch ?? (await getDefaultBranch());
-}
-
-async function ensureDraftBranch(login: string, path: string): Promise<string> {
+async function ensureDraftBranch(
+  repoFullName: string,
+  login: string,
+  path: string
+): Promise<string> {
   const branch = draftBranchName(login, path);
 
-  if (await branchExists(branch)) {
+  if (await branchExists(repoFullName, branch)) {
     return branch;
   }
 
-  const octokit = await createInstallationOctokit();
-  const { owner, repo } = getRepoInfo();
-  const targetBranch = await getTargetBranch();
+  const octokit = await createInstallationOctokit(repoFullName);
+  const { owner, repo } = parseRepoFullName(repoFullName);
+  const targetBranch = await getTargetBranch(repoFullName);
 
   const { data: ref } = await octokit.git.getRef({
     owner,
@@ -275,12 +392,8 @@ async function ensureDraftBranch(login: string, path: string): Promise<string> {
   return branch;
 }
 
-/**
- * Saves file content to the user's draft branch. Creates the branch if needed.
- * `sha` is the expected current file SHA on the draft branch (or target, for a
- * fresh branch) — omit to let GitHub figure it out (risks overwriting).
- */
 export async function saveToUserDraft(
+  repoFullName: string,
   login: string,
   path: string,
   content: string,
@@ -288,13 +401,13 @@ export async function saveToUserDraft(
   sha?: string,
   message?: string
 ): Promise<{ sha: string; branch: string }> {
-  const branch = await ensureDraftBranch(login, path);
+  const branch = await ensureDraftBranch(repoFullName, login, path);
 
-  const octokit = await createInstallationOctokit();
-  const { owner, repo } = getRepoInfo();
+  const octokit = await createInstallationOctokit(repoFullName);
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
-  // If sha wasn't supplied, look it up on the draft branch.
-  const currentSha = sha ?? (await getFileShaOnBranch(path, branch)) ?? undefined;
+  const currentSha =
+    sha ?? (await getFileShaOnBranch(repoFullName, path, branch)) ?? undefined;
 
   const { data } = await octokit.repos.createOrUpdateFileContents({
     owner,
@@ -311,25 +424,21 @@ export async function saveToUserDraft(
   return { sha: data.content?.sha ?? "", branch };
 }
 
-/**
- * Squash-merges the user's draft branch into the target branch and deletes
- * the draft on success. Returns `{ conflicted: true }` with the branch
- * preserved if GitHub cannot auto-merge.
- */
 export async function publishUserDraft(
+  repoFullName: string,
   login: string,
   path: string,
   commitMessage: string
 ): Promise<{ success: boolean; conflicted: boolean }> {
   const branch = draftBranchName(login, path);
 
-  if (!(await branchExists(branch))) {
+  if (!(await branchExists(repoFullName, branch))) {
     return { success: true, conflicted: false };
   }
 
-  const octokit = await createInstallationOctokit();
-  const { owner, repo } = getRepoInfo();
-  const targetBranch = await getTargetBranch();
+  const octokit = await createInstallationOctokit(repoFullName);
+  const { owner, repo } = parseRepoFullName(repoFullName);
+  const targetBranch = await getTargetBranch(repoFullName);
 
   try {
     await octokit.repos.merge({
@@ -348,20 +457,24 @@ export async function publishUserDraft(
 
     return { success: true, conflicted: false };
   } catch (error: unknown) {
-    if (error && typeof error === "object" && "status" in error && error.status === 409) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "status" in error &&
+      error.status === 409
+    ) {
       return { success: false, conflicted: true };
     }
     throw error;
   }
 }
 
-/**
- * Lists all draft branches belonging to the given user, returning the file path
- * each one represents.
- */
-export async function listUserDrafts(login: string): Promise<UserDraft[]> {
-  const octokit = await createInstallationOctokit();
-  const { owner, repo } = getRepoInfo();
+export async function listUserDrafts(
+  repoFullName: string,
+  login: string
+): Promise<UserDraft[]> {
+  const octokit = await createInstallationOctokit(repoFullName);
+  const { owner, repo } = parseRepoFullName(repoFullName);
   const prefix = `${DRAFT_BRANCH_PREFIX}${sanitizeLogin(login)}/`;
 
   const { data } = await octokit.git.listMatchingRefs({
@@ -382,11 +495,12 @@ export async function listUserDrafts(login: string): Promise<UserDraft[]> {
 }
 
 export async function getFileShaOnBranch(
+  repoFullName: string,
   path: string,
   branch: string
 ): Promise<string | null> {
-  const octokit = await createInstallationOctokit();
-  const { owner, repo } = getRepoInfo();
+  const octokit = await createInstallationOctokit(repoFullName);
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
   try {
     const { data } = await octokit.repos.getContent({
