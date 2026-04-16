@@ -1,110 +1,115 @@
-targetScope = 'resourceGroup'
+targetScope = 'subscription'
 
-@description('Base name for all resources')
 param appName string = 'sharemd'
+param location string = 'Australia East'
 
-@description('Azure region')
-param location string = resourceGroup().location
+@description('Resource group hosting the commute.fm DNS zone')
+param dnsResourceGroupName string = 'commute-dns'
 
-@description('GitHub App client ID')
-@secure()
-param githubAppClientId string
+param dnsZoneName string = 'commute.fm'
+param dnsRecordName string = 'sharemd'
 
-@description('GitHub App client secret')
-@secure()
-param githubAppClientSecret string
+@description('Full ghcr.io image reference including tag')
+param containerImage string = 'ghcr.io/john-manktelow/sharemd:latest'
 
-@description('GitHub App numeric ID')
-@secure()
-param githubAppId string
+@description('Object ID of the deployer — granted Key Vault Administrator to populate secrets')
+param deployerObjectId string
 
-@description('GitHub App private key (PEM, with newlines escaped as \\n)')
-@secure()
-param githubAppPrivateKey string
+// ---------------------------------------------------------------------------
 
-@description('NextAuth secret (random string)')
-@secure()
-param authSecret string
+var rgName = 'rg_${appName}'
+var customDomain = '${dnsRecordName}.${dnsZoneName}'
 
-@description('Target GitHub repo (owner/repo)')
-param githubRepo string
-
-// --- Container Registry ---
-
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: replace('${appName}acr', '-', '')
+resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
+  name: rgName
   location: location
-  sku: {
-    name: 'Basic'
-  }
-  properties: {
-    adminUserEnabled: false
+}
+
+resource rgDns 'Microsoft.Resources/resourceGroups@2024-03-01' existing = {
+  name: dnsResourceGroupName
+}
+
+// --- Identity (UAI for KV access) -------------------------------------------
+
+module identity 'modules/identity.bicep' = {
+  scope: rg
+  name: 'identityModule'
+  params: {
+    appName: appName
+    location: location
   }
 }
 
-// --- AcrPull role assignment for Web App managed identity ---
+// --- Key Vault (secrets populated manually post-deploy) ---------------------
 
-@description('AcrPull built-in role')
-var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-
-resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, webApp.id, acrPullRoleId)
-  scope: acr
-  properties: {
-    principalId: webApp.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
+module keyVault 'modules/keyVault.bicep' = {
+  scope: rg
+  name: 'keyVaultModule'
+  params: {
+    appName: appName
+    location: location
+    appPrincipalId: identity.outputs.principalId
+    deployerObjectId: deployerObjectId
   }
 }
 
-// --- App Service Plan ---
+// --- Container Apps Environment + Log Analytics (consumption — free grant) ---
 
-resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
-  name: '${appName}-plan'
-  location: location
-  kind: 'linux'
-  properties: {
-    reserved: true
-  }
-  sku: {
-    name: 'B1'
-    tier: 'Basic'
+module environment 'modules/environment.bicep' = {
+  scope: rg
+  name: 'environmentModule'
+  params: {
+    appName: appName
+    location: location
   }
 }
 
-// --- Web App ---
+// --- DNS (cross-scope, using predicted FQDN) --------------------------------
 
-resource webApp 'Microsoft.Web/sites@2023-12-01' = {
-  name: '${appName}-app'
-  location: location
-  kind: 'app,linux,container'
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
-    serverFarmId: plan.id
-    siteConfig: {
-      linuxFxVersion: 'DOCKER|${acr.properties.loginServer}/${appName}:latest'
-      acrUseManagedIdentityCreds: true
-      appSettings: [
-        { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'false' }
-        { name: 'GITHUB_APP_CLIENT_ID', value: githubAppClientId }
-        { name: 'GITHUB_APP_CLIENT_SECRET', value: githubAppClientSecret }
-        { name: 'GITHUB_APP_ID', value: githubAppId }
-        { name: 'GITHUB_APP_PRIVATE_KEY', value: githubAppPrivateKey }
-        { name: 'AUTH_SECRET', value: authSecret }
-        { name: 'GITHUB_REPO', value: githubRepo }
-        { name: 'AUTH_TRUST_HOST', value: 'true' }
-      ]
-      alwaysOn: true
-    }
-    httpsOnly: true
+module dns 'modules/dns.bicep' = {
+  scope: rgDns
+  name: 'dnsModule'
+  params: {
+    dnsZoneName: dnsZoneName
+    recordName: dnsRecordName
+    containerAppFqdn: 'app-${appName}.${environment.outputs.defaultDomain}'
   }
 }
 
-// --- Outputs ---
+// --- Container App (after DNS + KV so custom domain and secret refs work) ---
 
-output webAppName string = webApp.name
-output webAppUrl string = 'https://${webApp.properties.defaultHostName}'
-output acrLoginServer string = acr.properties.loginServer
-output acrName string = acr.name
+module app 'modules/app.bicep' = {
+  scope: rg
+  name: 'appModule'
+  dependsOn: [dns]
+  params: {
+    appName: appName
+    location: location
+    environmentId: environment.outputs.environmentId
+    containerImage: containerImage
+    customDomain: customDomain
+    identityId: identity.outputs.id
+    keyVaultUri: keyVault.outputs.keyVaultUri
+  }
+}
+
+// --- Managed cert (after app exists, validates via CNAME) -------------------
+
+module cert 'modules/cert.bicep' = {
+  scope: rg
+  name: 'certModule'
+  dependsOn: [app]
+  params: {
+    appName: appName
+    location: location
+    environmentName: environment.outputs.environmentName
+    customDomain: customDomain
+  }
+}
+
+// --- Outputs ----------------------------------------------------------------
+
+output resourceGroupName string = rg.name
+output appUrl string = 'https://${customDomain}'
+output defaultFqdn string = 'app-${appName}.${environment.outputs.defaultDomain}'
+output keyVaultName string = keyVault.outputs.keyVaultName
