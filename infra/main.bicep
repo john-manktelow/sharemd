@@ -12,6 +12,12 @@ param dnsRecordName string = 'sharemd'
 @description('Full ghcr.io image reference including tag')
 param containerImage string = 'ghcr.io/john-manktelow/sharemd:latest'
 
+@description('GitHub App client ID (not sensitive)')
+param githubAppClientId string
+
+@description('GitHub App numeric ID (not sensitive)')
+param githubAppId string
+
 @description('Object ID of the deployer — granted Key Vault Administrator to populate secrets')
 param deployerObjectId string
 
@@ -64,24 +70,11 @@ module environment 'modules/environment.bicep' = {
   }
 }
 
-// --- DNS (cross-scope, using predicted FQDN) --------------------------------
-
-module dns 'modules/dns.bicep' = {
-  scope: rgDns
-  name: 'dnsModule'
-  params: {
-    dnsZoneName: dnsZoneName
-    recordName: dnsRecordName
-    containerAppFqdn: 'app-${appName}.${environment.outputs.defaultDomain}'
-  }
-}
-
-// --- Container App (after DNS + KV so custom domain and secret refs work) ---
+// --- Container App (no custom domain yet — need verification ID first) ------
 
 module app 'modules/app.bicep' = {
   scope: rg
   name: 'appModule'
-  dependsOn: [dns]
   params: {
     appName: appName
     location: location
@@ -90,15 +83,30 @@ module app 'modules/app.bicep' = {
     customDomain: customDomain
     identityId: identity.outputs.id
     keyVaultUri: keyVault.outputs.keyVaultUri
+    githubAppClientId: githubAppClientId
+    githubAppId: githubAppId
   }
 }
 
-// --- Managed cert (after app exists, validates via CNAME) -------------------
+// --- DNS CNAME + asuid TXT (after app, using its verification ID) -----------
 
-module cert 'modules/cert.bicep' = {
+module dns 'modules/dns.bicep' = {
+  scope: rgDns
+  name: 'dnsModule'
+  params: {
+    dnsZoneName: dnsZoneName
+    recordName: dnsRecordName
+    containerAppFqdn: app.outputs.fqdn
+    customDomainVerificationId: app.outputs.customDomainVerificationId
+  }
+}
+
+// --- Managed cert (after DNS, validates via CNAME) --------------------------
+
+module appDomain 'modules/appDomain.bicep' = {
   scope: rg
-  name: 'certModule'
-  dependsOn: [app]
+  name: 'appDomainModule'
+  dependsOn: [dns]
   params: {
     appName: appName
     location: location
@@ -111,5 +119,5 @@ module cert 'modules/cert.bicep' = {
 
 output resourceGroupName string = rg.name
 output appUrl string = 'https://${customDomain}'
-output defaultFqdn string = 'app-${appName}.${environment.outputs.defaultDomain}'
+output defaultFqdn string = app.outputs.fqdn
 output keyVaultName string = keyVault.outputs.keyVaultName

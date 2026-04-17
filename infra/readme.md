@@ -18,29 +18,34 @@ In `commute-dns` (cross-scope):
 
 ## First deploy
 
+The Container App reads secrets from Key Vault at provision time, so the
+secrets must exist before the app is created. On the very first deploy the
+KV will be created but the app will fail — populate the secrets then rerun.
+
 ```bash
 cd infra
 az account set --subscription 49112093-8017-4deb-8682-7f2cc2483f8b
+./deploy.sh        # KV + environment created; app will fail (secrets missing)
+```
+
+Populate the secrets in `kv-sharemd` (the deploy script grants you
+Key Vault Administrator). `GHCR-PAT` is a GitHub PAT (classic) with
+`read:packages` scope — used to pull the private container image:
+
+```bash
+az keyvault secret set --vault-name kv-sharemd --name GITHUB-APP-CLIENT-SECRET --value '...'
+az keyvault secret set --vault-name kv-sharemd --name GITHUB-APP-PRIVATE-KEY --value '...'
+az keyvault secret set --vault-name kv-sharemd --name AUTH-SECRET --value "$(openssl rand -hex 32)"
+az keyvault secret set --vault-name kv-sharemd --name GHCR-PAT --value '...'
+```
+
+Then rerun the deploy — the app will now provision successfully:
+
+```bash
 ./deploy.sh
 ```
 
-Then populate the secrets in `kv-sharemd` (the deploy script grants you
-Key Vault Administrator):
-
-```bash
-az keyvault secret set --vault-name kv-sharemd --name GITHUB-APP-CLIENT-ID --value '...'
-az keyvault secret set --vault-name kv-sharemd --name GITHUB-APP-CLIENT-SECRET --value '...'
-az keyvault secret set --vault-name kv-sharemd --name GITHUB-APP-ID --value '...'
-az keyvault secret set --vault-name kv-sharemd --name GITHUB-APP-PRIVATE-KEY --value '...'
-az keyvault secret set --vault-name kv-sharemd --name AUTH-SECRET --value "$(openssl rand -hex 32)"
-```
-
-Then bind the managed cert to the custom domain (first time only):
-
-```bash
-az containerapp hostname bind -g rg_sharemd -n app-sharemd \
-  --hostname sharemd.commute.fm --certificate cert-sharemd --environment cae-sharemd
-```
+The deploy script also binds the managed cert to the custom domain.
 
 Set up GitHub Actions OIDC (first time only):
 
