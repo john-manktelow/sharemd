@@ -9,8 +9,8 @@ param dnsRecordName = 'sharemd'
 
 param containerImage = 'ghcr.io/john-manktelow/sharemd:latest'
 
-param githubAppClientId = 'Iv23licteik3p9tCp5aI'
-param githubAppId = '3394703'
+param githubAppClientId = 'Iv23liDfIyPDjLHL9vht'
+param githubAppId = '3404319'
 
 // Auto-filled by deploy.sh — leave empty here.
 param deployerObjectId = ''
