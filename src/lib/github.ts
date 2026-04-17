@@ -234,7 +234,7 @@ export async function getConfig(repoFullName: string): Promise<ShareMdConfig> {
       "status" in error &&
       error.status === 404
     ) {
-      return { directories: [{ path: "docs/", label: "Documentation" }] };
+      return { directories: [] };
     }
     throw error;
   }
@@ -477,11 +477,16 @@ export async function listUserDrafts(
   const { owner, repo } = parseRepoFullName(repoFullName);
   const prefix = `${DRAFT_BRANCH_PREFIX}${sanitizeLogin(login)}/`;
 
-  const { data } = await octokit.git.listMatchingRefs({
-    owner,
-    repo,
-    ref: `heads/${prefix}`,
-  });
+  let data;
+  try {
+    ({ data } = await octokit.git.listMatchingRefs({
+      owner,
+      repo,
+      ref: `heads/${prefix}`,
+    }));
+  } catch {
+    return [];
+  }
 
   const drafts: UserDraft[] = [];
   for (const ref of data) {

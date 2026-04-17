@@ -176,6 +176,21 @@ export default function FileBrowser({
     );
   }
 
+  if (roots.length === 0) {
+    return (
+      <div className="p-4 text-sm text-gray-500 dark:text-gray-400">
+        <p className="mb-2">No directories configured.</p>
+        <p>
+          Add a <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">.sharemd.yaml</code> file
+          to the root of this repo to get started:
+        </p>
+        <pre className="mt-2 text-xs bg-gray-100 dark:bg-gray-800 p-2 rounded overflow-x-auto">{`directories:
+  - path: docs/
+    label: Documentation`}</pre>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto">
       {roots.map((root) => (
