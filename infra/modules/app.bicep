@@ -1,6 +1,7 @@
 param appName string
 param location string
 param environmentId string
+param environmentName string
 param containerImage string
 param customDomain string
 param identityId string
@@ -15,7 +16,6 @@ var kvSecrets = [
   'GHCR-PAT'
 ]
 
-// Phase 1: create the app WITHOUT custom domain.
 resource containerApp 'Microsoft.App/containerApps@2025-07-01' = {
   name: 'app-${appName}'
   location: location
@@ -34,6 +34,12 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = {
         targetPort: 3000
         transport: 'auto'
         allowInsecure: false
+        customDomains: [
+          {
+            name: customDomain
+            bindingType: 'Auto'
+          }
+        ]
       }
       registries: [
         {
@@ -79,6 +85,20 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = {
   }
 }
 
+resource containerAppEnvironment 'Microsoft.App/managedEnvironments@2025-07-01' existing = {
+  name: environmentName
+}
+
+resource managedCert 'Microsoft.App/managedEnvironments/managedCertificates@2025-07-01' = {
+  parent: containerAppEnvironment
+  name: 'cert-${appName}'
+  location: location
+  properties: {
+    subjectName: customDomain
+    domainControlValidation: 'CNAME'
+  }
+  dependsOn: [containerApp]
+}
+
 output fqdn string = containerApp.properties.configuration.ingress.fqdn
 output appName string = containerApp.name
-output customDomainVerificationId string = containerApp.properties.customDomainVerificationId

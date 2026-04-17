@@ -70,25 +70,7 @@ module environment 'modules/environment.bicep' = {
   }
 }
 
-// --- Container App (no custom domain yet — need verification ID first) ------
-
-module app 'modules/app.bicep' = {
-  scope: rg
-  name: 'appModule'
-  params: {
-    appName: appName
-    location: location
-    environmentId: environment.outputs.environmentId
-    containerImage: containerImage
-    customDomain: customDomain
-    identityId: identity.outputs.id
-    keyVaultUri: keyVault.outputs.keyVaultUri
-    githubAppClientId: githubAppClientId
-    githubAppId: githubAppId
-  }
-}
-
-// --- DNS CNAME + asuid TXT (after app, using its verification ID) -----------
+// --- DNS CNAME (predicted FQDN — must exist before app so cert validation works)
 
 module dns 'modules/dns.bicep' = {
   scope: rgDns
@@ -96,22 +78,28 @@ module dns 'modules/dns.bicep' = {
   params: {
     dnsZoneName: dnsZoneName
     recordName: dnsRecordName
-    containerAppFqdn: app.outputs.fqdn
-    customDomainVerificationId: app.outputs.customDomainVerificationId
+    containerAppFqdn: 'app-${appName}.${environment.outputs.defaultDomain}'
+    customDomainVerificationId: environment.outputs.customDomainVerificationId
   }
 }
 
-// --- Managed cert (after DNS, validates via CNAME) --------------------------
+// --- Container App + managed cert (after DNS CNAME is in place) -------------
 
-module appDomain 'modules/appDomain.bicep' = {
+module app 'modules/app.bicep' = {
   scope: rg
-  name: 'appDomainModule'
+  name: 'appModule'
   dependsOn: [dns]
   params: {
     appName: appName
     location: location
+    environmentId: environment.outputs.environmentId
     environmentName: environment.outputs.environmentName
+    containerImage: containerImage
     customDomain: customDomain
+    identityId: identity.outputs.id
+    keyVaultUri: keyVault.outputs.keyVaultUri
+    githubAppClientId: githubAppClientId
+    githubAppId: githubAppId
   }
 }
 

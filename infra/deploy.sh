@@ -27,19 +27,11 @@ az deployment sub create \
   --parameters params.bicepparam \
   --parameters deployerObjectId="${DEPLOYER_OBJECT_ID}"
 
-# Bind custom hostname + cert (idempotent — safe to run on every deploy)
-echo
-echo "Binding custom hostname..."
-az containerapp hostname add -g "${RG}" -n "${APP}" --hostname "${HOSTNAME}" 2>/dev/null || true
-az containerapp hostname bind -g "${RG}" -n "${APP}" \
-  --hostname "${HOSTNAME}" --certificate "${CERT}" --environment "${ENV}" 2>/dev/null || true
-
 echo
 echo "Done."
 echo
 echo "If this is the first deploy, populate secrets in kv-sharemd:"
-echo "  az keyvault secret set --vault-name kv-sharemd --name GITHUB-APP-CLIENT-ID --value '...'"
 echo "  az keyvault secret set --vault-name kv-sharemd --name GITHUB-APP-CLIENT-SECRET --value '...'"
-echo "  az keyvault secret set --vault-name kv-sharemd --name GITHUB-APP-ID --value '...'"
 echo "  az keyvault secret set --vault-name kv-sharemd --name GITHUB-APP-PRIVATE-KEY --value '...'"
 echo "  az keyvault secret set --vault-name kv-sharemd --name AUTH-SECRET --value \"\$(openssl rand -hex 32)\""
+echo "  az keyvault secret set --vault-name kv-sharemd --name GHCR-PAT --value '...'"
