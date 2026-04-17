@@ -257,15 +257,18 @@ export async function getTargetBranch(repoFullName: string): Promise<string> {
 
 export async function listDirectory(
   repoFullName: string,
-  path: string
+  path: string,
+  ref?: string
 ): Promise<FileEntry[]> {
   const octokit = await createInstallationOctokit(repoFullName);
   const { owner, repo } = parseRepoFullName(repoFullName);
+  const branch = ref ?? (await getTargetBranch(repoFullName));
 
   const { data } = await octokit.repos.getContent({
     owner,
     repo,
     path: normalizePath(path),
+    ref: branch,
   });
 
   if (!Array.isArray(data)) {
