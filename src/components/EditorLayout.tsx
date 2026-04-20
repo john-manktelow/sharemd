@@ -22,9 +22,20 @@ export default function EditorLayout() {
   const [reposLoading, setReposLoading] = useState(true);
   const [reposError, setReposError] = useState<string | null>(null);
 
-  const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
+  const [selectedRepo, setSelectedRepoState] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<Set<string>>(new Set());
+
+  const REPO_STORAGE_KEY = "sharemd:selectedRepo";
+
+  const setSelectedRepo = useCallback((repo: string | null) => {
+    setSelectedRepoState(repo);
+    if (repo) {
+      localStorage.setItem(REPO_STORAGE_KEY, repo);
+    } else {
+      localStorage.removeItem(REPO_STORAGE_KEY);
+    }
+  }, []);
 
   // Fetch available repos on mount.
   useEffect(() => {
@@ -44,8 +55,12 @@ export default function EditorLayout() {
         }
         setReposData(data);
 
-        // Auto-select if there's only one repo.
-        if (data.repos.length === 1) {
+        // Restore previous selection if it's still available.
+        const saved = localStorage.getItem(REPO_STORAGE_KEY);
+        if (saved && data.repos.some((r) => r.fullName === saved)) {
+          setSelectedRepoState(saved);
+        } else if (data.repos.length === 1) {
+          // Auto-select if there's only one repo.
           setSelectedRepo(data.repos[0].fullName);
         }
       } catch {
@@ -62,7 +77,7 @@ export default function EditorLayout() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setSelectedRepo]);
 
   // Clear file selection and pending state when the repo changes.
   useEffect(() => {
@@ -116,7 +131,7 @@ export default function EditorLayout() {
         <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
           ShareMD
         </h1>
-        <UserMenu installUrl={reposData?.installUrl} />
+        <UserMenu />
       </header>
 
       <div className="flex flex-1 min-h-0">

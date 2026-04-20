@@ -77,6 +77,26 @@ export default function RepoPicker({
           </option>
         ))}
       </select>
+      {installUrl && (
+        <div className="flex gap-3 mt-1">
+          <a
+            href={installUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-blue-600 hover:underline"
+          >
+            Add repositories…
+          </a>
+          <a
+            href={installUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-blue-600 hover:underline"
+          >
+            Add organisation…
+          </a>
+        </div>
+      )}
     </div>
   );
 }

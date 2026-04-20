@@ -14,7 +14,7 @@ export function SignInButton() {
   );
 }
 
-export function UserMenu({ installUrl }: { installUrl?: string }) {
+export function UserMenu() {
   const { data: session } = useSession();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -61,17 +61,6 @@ export function UserMenu({ installUrl }: { installUrl?: string }) {
 
       {open && (
         <div className="absolute right-0 mt-1 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-50">
-          {installUrl && (
-            <a
-              href={installUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-              onClick={() => setOpen(false)}
-            >
-              Add repositories…
-            </a>
-          )}
           <button
             onClick={() => signOut()}
             className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"

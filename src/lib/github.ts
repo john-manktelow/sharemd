@@ -100,6 +100,17 @@ async function discoverAllRepos(): Promise<AccessibleRepo[]> {
     for (const r of repositories) {
       const fullName = r.full_name;
       repoInstallationCache.set(fullName, installation.id);
+
+      // Only include repos that have a .sharemd.yaml config file
+      const hasConfig = await repoHasSharemdConfig(
+        octokit,
+        r.owner.login,
+        r.name
+      );
+      if (!hasConfig) {
+        continue;
+      }
+
       allRepos.push({
         owner: r.owner.login,
         repo: r.name,
@@ -109,6 +120,19 @@ async function discoverAllRepos(): Promise<AccessibleRepo[]> {
   }
 
   return allRepos;
+}
+
+async function repoHasSharemdConfig(
+  octokit: Octokit,
+  owner: string,
+  repo: string
+): Promise<boolean> {
+  try {
+    await octokit.repos.getContent({ owner, repo, path: ".sharemd.yaml" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
